@@ -1,7 +1,37 @@
 import { logger } from '@nx/devkit';
+import { readFileSync } from 'fs';
 
 import { setPackageVersion, NpmPublishOptions, spawnAsync } from '../utils';
 import { DeployExecutorOptions } from '../schema';
+
+async function checkIfPackageExists(
+  packageName: string,
+  version: string,
+  npmOptions: NpmPublishOptions
+): Promise<boolean> {
+  try {
+    const args = ['view', `${packageName}@${version}`, 'version'];
+    if (npmOptions.registry) {
+      args.push('--registry', npmOptions.registry);
+    }
+    await spawnAsync('npm', args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getPackageInfo(
+  distFolderPath: string
+): Promise<{ name: string; version: string }> {
+  const packageJson = JSON.parse(
+    readFileSync(`${distFolderPath}/package.json`, 'utf-8')
+  );
+  return {
+    name: packageJson.name,
+    version: packageJson.version,
+  };
+}
 
 export async function run(
   distFolderPath: string,
@@ -22,6 +52,23 @@ export async function run(
     }
 
     const npmOptions = extractOnlyNPMOptions(options);
+
+    // Only check for existing package if explicitly enabled
+    if (options.checkExisting) {
+      const packageInfo = await getPackageInfo(distFolderPath);
+      const exists = await checkIfPackageExists(
+        packageInfo.name,
+        packageInfo.version,
+        npmOptions
+      );
+
+      if (exists) {
+        logger.warn(
+          `Package ${packageInfo.name}@${packageInfo.version} already exists in registry. Skipping publish.`
+        );
+        return;
+      }
+    }
 
     await spawnAsync('npm', [
       'publish',
